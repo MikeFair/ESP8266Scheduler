@@ -2,86 +2,61 @@
 #define TASK_H
 
 #include <Arduino.h>
-//#include "Scheduler.h"
+#include "RunGroups.h"
+#include "Delay.h"
 
 extern "C" {
-    #include "cont.h"
+#include "cont.h"
 }
 
 class Task {
 public:
-    Task() {
-        cont_init(&context);
-    }
+  Task() { cont_init(&context); }
 
 protected:
-    virtual void setup() {}
+  virtual void setup() {}
 
-    virtual void loop() {}
+  virtual bool loop() { return false; }
 
-    void delay(unsigned long ms) {
-        if (ms) {
-            delay_start = millis();
-            delay_ms = ms;
-        }
+  // Task
+  void yield() { cont_yield(&context); }
 
-        yield();
-    }
+  virtual bool shouldRun() { return true; }
 
-    void yield() {
-        cont_yield(&context);
-    }
+  // Delay
+  void delay(uint32_t ms) { Delay::startDelay(&delay_info, ms); }
+  inline bool is_delayed() { return Delay::isDelayed(&delay_info); }
 
-	inline bool isDelayed() {
-		return (delay_ms != 0);
-	}
+  // RunGroups
+  void setRunGroupId(uint8_t group_id) {
+    run_group_info.run_group_id = group_id;
+  }
 
-	void updateDelayTimer() {
-		if (delay_ms == 0) return;   // Optimize for the non-delayed case
+  struct RunGroupInfo run_group_info;
 
-		// This comparison is "rollover safe"
-        unsigned long now = millis();
-        if ((now - delay_start) >= delay_ms)
-			delay_ms = 0;
-	}
-
-    virtual bool shouldRun() {
-		// Tasks update their own delay timer
-		updateDelayTimer();
-		if (isDelayed()) return false;
-        if (!run_group_active) return false;
-		return !loop_complete;
-	}
-
-    uint8_t current_cycle_id = 0;
-    uint8_t run_group_id = 0xFF;
-    bool run_group_active = false;
-	
-    bool loop_complete = false;
 private:
-    friend class SchedulerClass;
-    friend void task_tramponline();
+  friend class SchedulerClass;
+  friend void task_tramponline();
 
-    Task *next;
-    Task *prev;
-    cont_t context;
+  Task *next;
+  Task *prev;
+  cont_t context;
 
+  bool setup_done = false;
+  struct DelayInfo delay_info;
 
-    bool setup_done = false;
-    unsigned long delay_start = 0;
-    unsigned long delay_ms = 0;
-
-    void loopWrapper() {
-        if (!setup_done) {
-            setup();
-            setup_done = true;
-        }
-
-        while(1) {
-            loop();
-            yield();
-        }
+  void loopWrapper() {
+    if (!setup_done) {
+      setup();
+      setup_done = true;
     }
+
+    while (1) {
+      if (shouldRun())
+        run_group_info.task_active = loop();
+      yield();
+    }
+  }
 };
 
 #endif
